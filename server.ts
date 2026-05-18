@@ -82,7 +82,12 @@ async function startServer() {
 
     try {
       const client = new GoogleGenAI({ 
-        apiKey: apiKey.trim()
+        apiKey: apiKey.trim(),
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          }
+        }
       });
       
       const userPrompt = `
@@ -113,7 +118,7 @@ ${questionData.grammarPoint}
       console.log(`[AI Server] Starting coaching evaluation for question ${questionData.id}`);
       
       const stream = await client.models.generateContentStream({
-        model: 'gemini-1.5-flash-002',
+        model: 'gemini-3.1-flash-lite',
         contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
         config: {
           systemInstruction: EVALUATION_INSTRUCTION,
@@ -163,7 +168,7 @@ ${questionData.grammarPoint}
       const prompt = `用户今天的学习战报：点亮了 ${newStars} 颗新星（即达到3次成功），挑战/练习了 ${practicedPoints} 个不同的语法考点。请生成一句富有诗意、睿智且温暖的总结，鼓励用户继续探索语法星系。字数在 30-50 字之间。`;
       
       const response = await client.models.generateContent({
-        model: 'gemini-1.5-flash-002',
+        model: 'gemini-3.1-flash-lite',
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
         config: { temperature: 0.7 }
       });
