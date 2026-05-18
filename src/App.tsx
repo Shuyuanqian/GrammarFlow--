@@ -34,6 +34,10 @@ import { mockPassages } from './data/passages';
 import { evaluateExplanation, generateDailyReport } from './services/geminiService';
 import { Question, QuizStep, Chapter, ViewMode, Passage } from './types';
 import { PassageView } from './components/PassageView';
+import { auth, db, handleFirestoreError, OperationType } from './lib/firebase';
+import { useAuthState } from 'react-firebase-hooks/auth';
+import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
+import { doc, getDoc, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 
 // --- Constants ---
 
@@ -164,65 +168,78 @@ export default function App() {
     return false;
   };
 
-  const [completedQuestions, setCompletedQuestions] = useState<Set<string>>(() => {
-    const saved = localStorage.getItem('grammarflow_progress');
-    if (saved) {
-      try {
-        return new Set(JSON.parse(saved));
-      } catch (e) {
-        console.error('Failed to load progress', e);
-      }
-    }
-    return new Set();
-  });
-
-  const [failedQuestionIds, setFailedQuestionIds] = useState<Set<string>>(() => {
-    const saved = localStorage.getItem('grammarflow_failed');
-    if (saved) {
-      try {
-        return new Set(JSON.parse(saved));
-      } catch (e) {
-        console.error('Failed to load errors', e);
-      }
-    }
-    return new Set();
-  });
-
-  const [starMap, setStarMap] = useState<Record<string, { s: number; a: number }>>(() => {
-    const saved = localStorage.getItem('grammarflow_starmap_v2');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error('Failed to load starMap', e);
-      }
-    }
-    // Migration from old starMap if exists
-    const oldSaved = localStorage.getItem('grammarflow_starmap');
-    if (oldSaved) {
-      try {
-        const oldData = JSON.parse(oldSaved);
-        const newData: Record<string, { s: number; a: number }> = {};
-        Object.entries(oldData).forEach(([id, count]) => {
-          newData[id] = { s: Number(count), a: Number(count) };
-        });
-        return newData;
-      } catch (e) {
-        console.error('Failed to migrate starMap', e);
-      }
-    }
-    return {};
-  });
-
+  const [completedQuestions, setCompletedQuestions] = useState<Set<string>>(new Set());
+  const [failedQuestionIds, setFailedQuestionIds] = useState<Set<string>>(new Set());
+  const [starMap, setStarMap] = useState<Record<string, { s: number; a: number }>>({});
   const [showStarMapOverlay, setShowStarMapOverlay] = useState(false);
-  
-  const [initialStarMap] = useState<Record<string, { s: number; a: number }>>(() => {
-    const saved = localStorage.getItem('grammarflow_starmap_v2');
-    return saved ? JSON.parse(saved) : {};
-  });
+  const [initialStarMap, setInitialStarMap] = useState<Record<string, { s: number; a: number }>>({});
   const [showDailyReport, setShowDailyReport] = useState(false);
   const [reportSummary, setReportSummary] = useState('');
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
+
+  // --- Auth & Data Fetching ---
+  const [user, userLoading] = useAuthState(auth);
+  const [isDataLoaded, setIsDataLoaded] = useState(false);
+  const [isSigningIn, setIsSigningIn] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const loadedDataStr = useRef('');
+
+  const loadData = async () => {
+    if (!user) return;
+    setLoadError(null);
+    try {
+      const userDocRef = doc(db, 'users', user.uid);
+      const docSnap = await getDoc(userDocRef);
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (data.completedQuestions) {
+          setCompletedQuestions(new Set(data.completedQuestions));
+        }
+        if (data.failedQuestionIds) {
+          setFailedQuestionIds(new Set(data.failedQuestionIds));
+        }
+        if (data.starMap) {
+          setStarMap(data.starMap);
+          setInitialStarMap(data.starMap);
+        }
+        loadedDataStr.current = JSON.stringify({
+          completedQuestions: Array.from(new Set(data.completedQuestions || [])),
+          failedQuestionIds: Array.from(new Set(data.failedQuestionIds || [])),
+          starMap: data.starMap || {}
+        });
+      } else {
+        try {
+          await setDoc(userDocRef, {
+            userId: user.uid,
+            completedQuestions: [],
+            failedQuestionIds: [],
+            starMap: {},
+            updatedAt: serverTimestamp()
+          });
+          loadedDataStr.current = JSON.stringify({ completedQuestions: [], failedQuestionIds: [], starMap: {} });
+        } catch(e) {
+          handleFirestoreError(e, OperationType.CREATE, 'users');
+        }
+      }
+      setIsDataLoaded(true);
+    } catch (err: any) {
+      console.error("Firestore Loading Error:", err);
+      const errorMessage = err.message || String(err);
+      if (errorMessage.includes('unavailable')) {
+        setLoadError('无法连接到数据库，可能是网络波动或系统正在初始化。请稍后重试。');
+      } else {
+        setLoadError('加载数据失败，请重试。');
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (!user) {
+      setIsDataLoaded(false);
+      return;
+    }
+    loadData();
+  }, [user]);
 
   // --- Speech Recognition ---
   const [isListening, setIsListening] = useState(false);
@@ -269,8 +286,24 @@ export default function App() {
 
   // --- Persistence ---
   useEffect(() => {
-    localStorage.setItem('grammarflow_starmap_v2', JSON.stringify(starMap));
-  }, [starMap]);
+    if (!user || !isDataLoaded) return;
+    const currentDataStr = JSON.stringify({
+      completedQuestions: Array.from(completedQuestions),
+      failedQuestionIds: Array.from(failedQuestionIds),
+      starMap: starMap
+    });
+    if (currentDataStr !== loadedDataStr.current) {
+      loadedDataStr.current = currentDataStr;
+      const userDocRef = doc(db, 'users', user.uid);
+      updateDoc(userDocRef, {
+        completedQuestions: Array.from(completedQuestions),
+        failedQuestionIds: Array.from(failedQuestionIds),
+        starMap: starMap,
+        updatedAt: serverTimestamp()
+      }).catch(e => handleFirestoreError(e, OperationType.UPDATE, 'users'));
+    }
+  }, [completedQuestions, failedQuestionIds, starMap, user, isDataLoaded]);
+
   useEffect(() => {
     let interval: NodeJS.Timeout;
     if (isEvaluating) {
@@ -281,14 +314,6 @@ export default function App() {
     }
     return () => clearInterval(interval);
   }, [isEvaluating]);
-
-  useEffect(() => {
-    localStorage.setItem('grammarflow_progress', JSON.stringify(Array.from(completedQuestions)));
-  }, [completedQuestions]);
-
-  useEffect(() => {
-    localStorage.setItem('grammarflow_failed', JSON.stringify(Array.from(failedQuestionIds)));
-  }, [failedQuestionIds]);
 
   // --- Derived Data ---
   const chapters = useMemo(() => {
@@ -429,11 +454,10 @@ export default function App() {
           }
 
           const cleaned = text
-            .replace(/\[TECHNICAL\]\s*[：:]\s*/gi, '')
-            .replace(/命中考点：#\d+.*?\n?/g, '')
-            .replace(/\[STATUS\]\s*[：:]\s*(PASS|FAIL|CORRECT|INCORRECT)\s*\n?/gi, '')
+            .replace(/\[STATUS\]\s*[：:]\s*(PASS|FAIL|CORRECT|INCORRECT)\s*/gi, '')
             .replace(/\[REASONING\]\s*[：:]\s*.*?\n/gi, '')
-            .replace(/\[COMMENT\]\s*[：:]\s*\n?/gi, '')
+            .replace(/\[COMMENT\]\s*[：:]\s*/gi, '')
+            .replace(/\[TECHNICAL\]\s*[：:]\s*/gi, '')
             .replace(/\[DONE\]/gi, '')
             .trim();
           
@@ -480,13 +504,11 @@ export default function App() {
         });
       }
 
-      // Final cleanup and state sync
       const finalCleanedComment = comment
-        .replace(/\[TECHNICAL\]\s*[：:]\s*/gi, '')
-        .replace(/命中考点：#\d+.*?\n?/g, '')
-        .replace(/\[STATUS\]\s*[：:]\s*(PASS|FAIL|CORRECT|INCORRECT)\n?/gi, '')
+        .replace(/\[STATUS\]\s*[：:]\s*(PASS|FAIL|CORRECT|INCORRECT)\s*/gi, '')
         .replace(/\[REASONING\]\s*[：:]\s*.*?\n/gi, '')
-        .replace(/\[COMMENT\]\s*[：:]\s*\n?/gi, '')
+        .replace(/\[COMMENT\]\s*[：:]\s*/gi, '')
+        .replace(/\[TECHNICAL\]\s*[：:]\s*/gi, '')
         .replace(/\[DONE\]/gi, '')
         .trim();
 
@@ -610,7 +632,77 @@ export default function App() {
     }
   };
 
+  const handleLogin = async () => {
+    if (isSigningIn) return;
+    setIsSigningIn(true);
+    try {
+      await signInWithPopup(auth, new GoogleAuthProvider());
+    } catch (error: any) {
+      if (error.code === 'auth/popup-closed-by-user') {
+        console.log('Login cancelled by user');
+      } else if (error.code === 'auth/cancelled-popup-request') {
+        console.log('Login request cancelled due to multiple attempts');
+      } else {
+        console.error('Login error:', error);
+      }
+    } finally {
+      setIsSigningIn(false);
+    }
+  };
+
   // --- Render Helpers ---
+
+  if (userLoading || (!isDataLoaded && user && !loadError)) {
+    return (
+      <div className="min-h-[100dvh] bg-[#050505] text-white flex items-center justify-center">
+        <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="min-h-[100dvh] bg-[#050505] text-white flex flex-col items-center justify-center p-4">
+        <div className="max-w-md w-full text-center space-y-6">
+          <AlertCircle className="w-12 h-12 text-red-500 mx-auto" />
+          <h2 className="text-xl font-bold">连接异常</h2>
+          <p className="text-white/60">{loadError}</p>
+          <button
+            onClick={() => loadData()}
+            className="w-full py-4 rounded-2xl bg-white/10 border border-white/20 text-white font-bold hover:bg-white/20 transition-all active:scale-95"
+          >
+            重试接入
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="min-h-[100dvh] bg-[#050505] text-white flex flex-col items-center justify-center p-4">
+        <div className="max-w-md w-full text-center space-y-8">
+          <h1 className="text-5xl font-black italic tracking-tighter neon-text">
+            GRAMMAR<span className="text-blue-500">FLOW</span>
+          </h1>
+          <p className="text-white/60 tracking-widest text-sm uppercase">赛博治愈系 · SZ Zhongkao</p>
+          
+          <button
+            onClick={handleLogin}
+            disabled={isSigningIn}
+            className="w-full py-4 rounded-2xl bg-white/10 border border-white/20 text-white font-bold text-lg hover:bg-white/20 transition-all flex items-center justify-center gap-3 active:scale-95 hover:shadow-[0_0_20px_rgba(255,255,255,0.1)] disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isSigningIn ? (
+              <Loader2 className="w-5 h-5 animate-spin" />
+            ) : (
+              <Sparkles className="w-5 h-5 text-yellow-500" />
+            )}
+            {isSigningIn ? '正在接入...' : '接入系统 (Google Login)'}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (viewMode === 'passage' && currentPassage) {
     return (
@@ -1016,9 +1108,9 @@ export default function App() {
                     animate={{ opacity: 1, y: 0 }}
                     className={cn(
                       "mt-6 p-8 rounded-[32px] border-2 transition-all duration-500",
-                      aiFeedback.status === 'pass' ? "bg-green-50/50 border-green-200 cyber-glow-pass" : 
-                      aiFeedback.status === 'partial' ? "bg-orange-50/50 border-orange-200 cyber-glow-partial" :
-                      "bg-red-50/50 border-red-200 cyber-glow-fail"
+                      aiFeedback.status === 'pass' ? "bg-green-50/50 border-green-200" : 
+                      aiFeedback.status === 'partial' ? "bg-orange-50/50 border-orange-200" :
+                      "bg-blue-50/50 border-blue-200"
                     )}
                   >
                     <div className="flex items-center justify-between mb-4">
@@ -1027,21 +1119,21 @@ export default function App() {
                           "w-8 h-8 rounded-full flex items-center justify-center",
                           aiFeedback.status === 'pass' ? "bg-green-500 text-white" : 
                           aiFeedback.status === 'partial' ? "bg-orange-500 text-white" :
-                          "bg-red-500 text-white"
+                          "bg-blue-500 text-white"
                         )}>
                           {aiFeedback.status === 'pass' ? <CheckCircle2 className="w-5 h-5" /> : 
                            aiFeedback.status === 'partial' ? <AlertCircle className="w-5 h-5" /> :
-                           <AlertCircle className="w-5 h-5" />}
+                           <Sparkles className="w-5 h-5" />}
                         </div>
                         <span className={cn(
                           "font-black uppercase tracking-[0.2em] text-xs",
                           aiFeedback.status === 'pass' ? "text-green-600" : 
                           aiFeedback.status === 'partial' ? "text-orange-600" :
-                          "text-red-600"
+                          "text-blue-600"
                         )}>
                           {aiFeedback.status === 'pass' ? '挑战通过' : 
                            aiFeedback.status === 'partial' ? '仍需完善' : 
-                           aiFeedback.status === 'error' ? '无效输入' : '挑战未通过'}
+                           aiFeedback.status === 'error' ? '无效输入' : '教练复盘'}
                         </span>
                       </div>
 

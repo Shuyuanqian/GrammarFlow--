@@ -3,5 +3,8 @@
   "description": "面向中学生的互动式英语语法学习产品，通过‘解释挑战’实现深度学习闭环。",
   "requestFramePermissions": [
     "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
   ]
 }

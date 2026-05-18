@@ -111,6 +111,25 @@
   }
 }
 
+.markdown-body {
+  @apply space-y-4;
+}
+.markdown-body ul, .markdown-body ol {
+  @apply pl-6 space-y-2;
+}
+.markdown-body ul {
+  @apply list-disc;
+}
+.markdown-body ol {
+  @apply list-decimal;
+}
+.markdown-body p {
+  @apply mb-4 leading-relaxed;
+}
+.markdown-body strong {
+  @apply text-blue-400 font-bold;
+}
+
 .star {
   position: absolute;
   background: white;

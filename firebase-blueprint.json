@@ -1,0 +1,38 @@
+{
+  "entities": {
+    "UserProgress": {
+      "title": "UserProgress",
+      "description": "Stores user learning progress like completed questions and stars.",
+      "type": "object",
+      "properties": {
+        "completedQuestions": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "List of question IDs completed"
+        },
+        "failedQuestionIds": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "List of question IDs failed"
+        },
+        "starMap": {
+          "type": "object",
+          "description": "Map of question ID to success and attempt counts"
+        },
+        "userId": {
+          "type": "string"
+        },
+        "updatedAt": {
+          "type": "string"
+        }
+      },
+      "required": ["userId", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProgress" },
+      "description": "User progress data"
+    }
+  }
+}

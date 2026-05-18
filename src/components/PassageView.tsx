@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import Markdown from 'react-markdown';
 import { 
   CheckCircle2, 
   XCircle, 
@@ -129,11 +130,10 @@ export const PassageView: React.FC<PassageViewProps> = ({
           }
 
           const cleaned = text
-            .replace(/\[TECHNICAL\]\s*[：:]\s*/gi, '')
-            .replace(/命中考点：#\d+.*?\n?/g, '')
-            .replace(/\[STATUS\]\s*[：:]\s*(PASS|FAIL|CORRECT|INCORRECT)\s*\n?/gi, '')
+            .replace(/\[STATUS\]\s*[：:]\s*(PASS|FAIL|CORRECT|INCORRECT)\s*/gi, '')
             .replace(/\[REASONING\]\s*[：:]\s*.*?\n/gi, '')
-            .replace(/\[COMMENT\]\s*[：:]\s*\n?/gi, '')
+            .replace(/\[COMMENT\]\s*[：:]\s*/gi, '')
+            .replace(/\[TECHNICAL\]\s*[：:]\s*/gi, '')
             .replace(/\[DONE\]/gi, '')
             .trim();
 
@@ -153,11 +153,10 @@ export const PassageView: React.FC<PassageViewProps> = ({
       }
 
       const finalCleaned = result.comment
-        .replace(/\[TECHNICAL\]\s*[：:]\s*/gi, '')
-        .replace(/命中考点：#\d+.*?\n?/g, '')
-        .replace(/\[STATUS\]\s*[：:]\s*(PASS|FAIL|CORRECT|INCORRECT)\s*\n?/gi, '')
+        .replace(/\[STATUS\]\s*[：:]\s*(PASS|FAIL|CORRECT|INCORRECT)\s*/gi, '')
         .replace(/\[REASONING\]\s*[：:]\s*.*?\n/gi, '')
-        .replace(/\[COMMENT\]\s*[：:]\s*\n?/gi, '')
+        .replace(/\[COMMENT\]\s*[：:]\s*/gi, '')
+        .replace(/\[TECHNICAL\]\s*[：:]\s*/gi, '')
         .replace(/\[DONE\]/gi, '')
         .trim();
 
@@ -365,11 +364,28 @@ export const PassageView: React.FC<PassageViewProps> = ({
 
                 {aiFeedback && (
                   <motion.div 
-                    initial={{ opacity: 0, y: 10 }}
+                    initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
-                    className={`mb-8 p-6 rounded-3xl whitespace-pre-wrap ${aiFeedback.status === 'pass' ? 'bg-green-500/10 border border-green-500/20' : 'bg-blue-500/10 border border-blue-500/20'}`}
+                    className={`mt-6 p-8 rounded-[32px] border-2 transition-all duration-500 ${
+                      aiFeedback.status === 'pass' ? 'bg-green-500/10 border-green-500/20' : 'bg-blue-500/10 border-blue-500/20'
+                    }`}
                   >
-                    <p className="text-lg leading-relaxed italic">"{aiFeedback.comment}"</p>
+                    <div className="flex items-center gap-3 mb-4">
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                        aiFeedback.status === 'pass' ? 'bg-green-500 text-white' : 'bg-blue-500 text-white'
+                      }`}>
+                        {aiFeedback.status === 'pass' ? <CheckCircle2 className="w-5 h-5" /> : <Sparkles className="w-5 h-5" />}
+                      </div>
+                      <span className={`font-black uppercase tracking-[0.2em] text-xs ${
+                        aiFeedback.status === 'pass' ? 'text-green-400' : 'text-blue-400'
+                      }`}>
+                        {aiFeedback.status === 'pass' ? '挑战通过' : '教练复盘'}
+                      </span>
+                    </div>
+
+                    <div className="text-white text-lg font-medium leading-relaxed markdown-body">
+                      <Markdown>{aiFeedback.comment}</Markdown>
+                    </div>
                   </motion.div>
                 )}
 
